@@ -404,6 +404,13 @@ Compass calibration shall be supported.
 
 Priority: MUST
 
+Acceptance Criteria:
+
+- The WebUI shall provide an owner calibration that captures one operator-marked full pan rotation, validates sample coverage, and stores the compass offset and axis-scale fit.
+- The owner sweep shall require a fresh compass sample and a manual reference-button press to start; the operator releases the button to begin rotation and presses it again at the reference mark to complete the sweep. Explicit stop, sensor loss, and a bounded timeout shall also stop the sweep.
+- A later site sweep may refresh the local compass offset using a valid owner fit; it shall preserve the owner-calibrated axis scales and leave the prior calibration unchanged if the sweep fails.
+- Compass calibration shall remain separate from the mechanical home/index reference and pan-servo neutral setting.
+
 ---
 
 ## REQ-COMP-004
@@ -794,8 +801,11 @@ Priority: MUST
 Acceptance Criteria:
 
 - A valid existing Backpack VRX config version 5 retains all existing settings after upgrade.
+- A valid local version 6 config retains its pan neutral and legacy settings when upgrading to version 7.
 - New config fields are initialized without resetting unrelated stored settings.
 - Migration behavior is covered by tests for both a legacy config and a new config.
+
+Implementation note: the local v7 prototype has helper-level migration tests and user-confirmed saved-fit status after reboot. Byte-accurate EEPROM fixtures, complete legacy-field preservation tests, and coefficient-by-coefficient reload checks remain outstanding acceptance work.
 
 ---
 

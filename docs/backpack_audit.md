@@ -6,7 +6,18 @@ Audit date: 2026-11-11
 
 This document records behavior verified in the `Backpack` repository clone in this workspace on the audit date. It focuses on the current AAT target and its direct runtime, configuration, and WebUI paths. It is not a claim that the listed features are absent from every other Backpack target or module.
 
-The audit distinguishes existing behavior from the proposed AAT-Pro architecture. Source paths below are relative to the sibling `Backpack` repository.
+The audit distinguishes the original positional-servo baseline from proposed AAT-Pro capabilities. Baseline sections below are historical; the addendum records subsequent local commissioning changes, not an upstream release. Source paths below are relative to the sibling `Backpack` repository.
+
+## Commissioning Addendum (2026-11-11)
+
+- COM6 runs `AAT_ESP32_Backpack_ServoTest`, an ESP32 Wi-Fi-only commissioning build. AP: `ExpressLRS AAT Backpack`, password `expresslrs`, address `10.0.0.1`. Pan signal GPIO27; elevation GPIO14 remains detached. HMC/OLED share SDA22/SCL21. GPIO32 is a manual active-low reference button connected to ground, not an automatic position sensor.
+- `/aatservo` exposes bounded 1000-2000 us pulse commands, raw compass/status telemetry, operator-marked owner calibration, and site-offset refresh. Manual commands expire to neutral after 3 seconds without keepalive. Sweeps have a 14-second timeout and sensor-loss/manual-stop exits. Tracking is bypassed; no sweep starts on boot. Neutral-before-release behavior and stopping before fit/EEPROM work still need safety verification.
+- Continuous HMC reads became static with persistent LOCK. Single-shot configuration 104/32/1 plus a 500 ms conversion retry restored motion response; the user confirmed that readback after reboot. The cause of persistent LOCK is not established by this workaround. A successful read counter alone does not prove a new conversion.
+- Pan neutral is 1520 us; leftward motion starts at 1480 us and slow rightward motion at 1565 us. Bench rates: about 12 deg/s at 1450 us and 45 deg/s at 1000/2000 us. Load/supply conditions were not recorded; these are not production speed limits.
+- Owner fit: 11/12 sectors, candidate offsets (156.0,-63.5), scales (1.11,0.91). Site fit: 12/12 sectors, candidate offsets (150.5,-58.5); candidate scales (1.14,0.89) are not persisted. Site refresh preserves owner scales. Stored offsets are rounded to integers and scales to permille, so displayed candidates are not exact EEPROM values.
+- Local VRX config is v7 with v5/v6 migrations and new neutral/compass fields. After reboot the user confirmed "Compass fit saved", not each coefficient independently. 32 native tests passed; standard ESP32 AAT and commissioning builds and JavaScript syntax were checked during development. Final all-target builds, serialized migration tests, and remote CI remain pending.
+- The fitter is an axis-aligned min/max correction with provisional sample/sector gates, not a validated general ellipse fit. Field stability, outlier/overflow rejection, asynchronous state consistency, shorter startup sweeps, calibrated feedback, mechanical reference, and travel protection remain outstanding. Live heading/rate are raw sensor-frame diagnostics, not calibrated north or guaranteed angular speed.
+- The bench allows up to two turns in either direction, not unlimited rotation. Do not restore positional firmware onto the powered continuous-pan actuator. Calibration UX and consistency with existing Backpack options require redesign; see Phase 6 in `backlog.md`.
 
 ## Build and Target Integration
 
@@ -20,6 +31,40 @@ The AAT target definitions are in `targets/aat.ini`:
 
 The target-specific source selection excludes other Backpack application entry points. Servo and OLED support are compiled conditionally from pin macros. No distinct ESP32-S3 AAT environment is defined in `targets/aat.ini`; this observation does not establish whether an ESP32-S3 build might work through another environment.
 
+### Baseline Timing Structure
+
+`Vrx_main::loop()` samples `millis()`, updates devices, and calls `AatModule::Loop()` once per Arduino loop iteration. There is no fixed active tracking-loop schedule. `AatModule::Loop()` processes GPS, samples the battery, updates the servo when eligible, and processes CRSF. `servoUpdate()` limits servo writes to no more than one per 10 milliseconds; before home is set, the AAT loop delays for 20 milliseconds. These are distinct timing points and do not establish achieved loop period or jitter.
+
+The architecture's 10 Hz minimum and 20 Hz target do not yet specify whether they refer to main-loop cadence, completed tracking calculations, or servo updates. DEC-08 must define the timing points and jitter statistic before hardware measurements can be treated as acceptance results. Measurements must include idle WebUI and concurrent `/aatconfig` requests on each supported target.
+
+An opt-in `AAT_ESP32_Backpack_Perf` environment records AAT loop period/runtime, servo-write intervals, ESP-NOW/MSP receipt, MAC acceptance/rejection, queue drops, CRSF telemetry, GPS/home, bind state, and marker state; `/aatperf?reset=1` clears counters and `/aatperf` returns a JSON snapshot. The diagnostic image was built and uploaded to the ESP32 on COM6 with user approval. It preserves the normal AAT running/binding state, initializes ESP-NOW, and starts the `ExpressLRS AAT Backpack` AP in AP+STA mode at boot; the AP password is `expresslrs` and its address is `10.0.0.1`. The device remains on this diagnostic build. Standard AAT firmware does not start Wi-Fi automatically; it requires the GPIO25 button when wired, or the VRX Backpack Wi-Fi-mode MSP command.
+
+The current diagnostic build does not contain a compiled UID. If no group address is stored, this diagnostic enters binding immediately and `/aatperf` reports `binding: true`; it accepts `MSP_ELRS_BIND`, stores the TX group address, and reboots into normal ESP-NOW operation. This immediate behavior is diagnostic-only; standard firmware retains its normal autobind flow. The diagnostic also suppresses the normal 120-second bind-expiry reboot so it remains available during testing; standard firmware retains that timeout. A shared `MY_BINDING_PHRASE` on both builds is an alternative; keep the phrase local and do not put it in logs or chat. TX Backpack telemetry mode must not be `OFF` for GPS frames to reach AAT.
+
+Serial capture showed repeated `Binding expired` and `Rebooting into wifi update mode` messages on the earlier diagnostic build. The current diagnostic suppresses that timeout and persists a bound marker. On the latest T20 bind attempt, serial output showed `Processing Binding Packet...` with group address `48:F4:75:E4:3E:57`; after reboot `/aatperf` reported `binding: false`, `bound_marker: true`, and `connection_state: running`. T20 pairing is confirmed.
+
+The first reported sample had 2,765 loop intervals, 23,309 us minimum and 316,228 us maximum period, a 292,919 us min/max range, 26,050 us maximum loop duration, and zero servo updates. It was captured with the static configuration WebUI open under minimal load; no ELRS/GPS data or servo output was present. This is a pre-home idle sample, not active tracking or concurrent WebUI-request data, and must not set DEC-08 limits. Capture separate 60-second active-tracking windows with the WebUI idle and under request load, without manual bearing/elevation overrides.
+
+An active-tracking sample was subsequently captured with the T20 in ELRS MAVLink link mode. GPS and home were active. The sample contained 22,108 loop intervals, 20 us minimum and 61,200 us maximum loop period (61,180 us range), 25,038 us maximum loop duration, 2,737 servo updates, and servo intervals of 3,468 to 21,148 us (17,680 us range). The receive path recorded 542 ESP-NOW datagrams/MSP packets, all 542 MAC-accepted with zero rejects or queue drops; all 542 were CRSF telemetry packets, including 53 GPS frames. WebUI load condition and capture duration were not recorded. The 3,468 us servo minimum is below the nominal 10 ms servo-update gate and must be investigated before these figures are used as acceptance thresholds.
+
+A second, larger active-tracking sample in the same reported ELRS MAVLink link mode contained 110,523 loop intervals, 20 us minimum and 61,200 us maximum loop period (61,180 us range), 25,038 us maximum loop duration, 13,878 servo updates, and servo intervals of 3,468 to 23,285 us (19,817 us range). It recorded 2,842 ESP-NOW datagrams/MSP packets, all MAC-accepted with zero rejects or queue drops; all 2,842 were CRSF telemetry packets, including 273 GPS frames. GPS and home were active. Capture duration and WebUI load condition were not provided. The repeated 3,468 us servo minimum remains below the nominal 10 ms gate and requires instrumentation review; do not set DEC-08 limits from this sample yet.
+
+### Verified Baseline Build
+
+Verified on 2026-11-11 with PlatformIO Core 6.2.0. The AAT environments use Espressif platform packages `espressif8266@4.2.1` and `espressif32@6.7.0`, as declared by the target/common configuration.
+
+From the Backpack repository root, build each current AAT environment with:
+
+```text
+python -m platformio run -e AAT_ESP_Backpack_via_UART
+python -m platformio run -e AAT_ESP_Backpack_via_WIFI
+python -m platformio run -e AAT_ESP32_Backpack_via_UART
+```
+
+All three builds completed successfully. The native regression suite was also run with `python -m platformio test -e native-aat-test`; all 12 navigation, servo-mode, projection-limit, endpoint-validation, and legacy-default tests passed using MSYS2 UCRT64 GCC/G++ 16.1.0. On Windows, ensure `C:\msys64\ucrt64\bin` is on `PATH` when running the native test environment.
+
+The Backpack GitHub Actions workflow runs the target validator, builds every PlatformIO environment selected from `targets/*.ini` whose name contains `UART`, and runs the native AAT suite in a dedicated job. The AAT Wi-Fi environment does not match the workflow's UART selector; it was built explicitly using the command above. The new native-test CI job has not yet been observed on a remote run.
+
 ## Runtime Behavior
 
 ### Telemetry and GPS
@@ -27,6 +72,8 @@ The target-specific source selection excludes other Backpack application entry p
 `CrsfModuleBase` assembles incoming CRSF frames, checks declared frame lengths, and validates CRC before dispatch. `AatModule::onCrsfPacketIn` forwards CRSF GPS frames to `SendGpsTelemetry`; the AAT tracking path does not consume MAVLink packets.
 
 The GPS packet handler stores latitude, longitude, speed, heading, altitude, satellite count, and an update flag. The tracking calculations use latitude, longitude, altitude, and satellite count; stored speed and heading are not used by the current tracking calculations.
+
+The AAT receiver obtains Backpack messages over ESP-NOW. The TX Backpack forwards CRSF telemetry frames when its Backpack telemetry mode is not `OFF`. The receiver accepts packets only from its configured UID/group MAC, except while in binding mode; a shared `MY_BINDING_PHRASE` generates the matching UID during build configuration. Wi-Fi is only the configuration/update interface, not the radio-to-tracker link. The current diagnostic build supports ESP-NOW and AP+STA concurrently; its receive counters can distinguish no packets, MAC rejects, queue drops, telemetry frames, and GPS frames.
 
 ### Home and Navigation
 

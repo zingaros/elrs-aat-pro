@@ -107,6 +107,10 @@ The current AAT runtime consumes CRSF GPS frames, acquires home using a satellit
 
 New AAT-Pro builds shall extend these Backpack mechanisms rather than introduce a parallel target registry or build system. Exact target names, supported boards, and upload methods remain subject to the target definitions actually added to Backpack.
 
+## Initial AAT-Pro Profile Decision
+
+The initial AAT-Pro development profile is the existing `AAT_ESP32_Backpack_via_UART` environment on a generic ESP32 DevKit; no additional target registration is required for this profile. AAT Classic remains on the existing ESP8266 environment without changes. Initial position input is CRSF aircraft GPS only. Tracker-local GPS and compass drivers are excluded until specific modules, buses, and pins are selected. ESP32-S3 remains proposed and unverified.
+
 ---
 
 # 5. Product Variants
@@ -396,6 +400,19 @@ Compass
 Compass + GPS
 ```
 
+## Pan Commissioning Lifecycle
+
+The WebUI provides two distinct calibration operations:
+
+- Owner commissioning uses a manual reference button to mark the start and return of one pan rotation, fits compass X/Y offsets and axis scales, and saves only after coverage validation.
+- A later site sweep reuses the saved scale factors and updates only local X/Y offsets. A failed or incomplete sweep does not replace the saved fit.
+
+The operator presses and holds the reference button before starting the sweep, releases it to begin rotation, and presses it again when the pan returns to the visual reference. The switch is not coupled to pan angle and does not detect servo neutral. Explicit cancellation, stale compass data, and a bounded timeout also stop the sweep. Neutral pulse and mechanical reference remain separate settings. Active tracking remains disabled in the commissioning build.
+
+The local commissioning prototype is opt-in (`AAT_ESP32_Backpack_ServoTest`), not a complete production setup wizard. It uses single-shot HMC reads with a 500 ms retrigger, an axis-aligned min/max fit, and provisional 36-sample/10-of-12-sector acceptance. It reports field-magnitude spread but does not validate magnetic stability. Fitted-sector coverage does not independently prove a full turn. Saved calibration is not yet used for displayed raw heading/rate or tracking. Site refresh currently makes a full turn too; a genuinely shorter startup sweep remains future work.
+
+Rework calibration UX and overall AAT consistency with existing Backpack options before release: ordered owner/site steps, explicit prerequisites, live/candidate/saved values, consistent save/apply behavior, cancellation/recovery, and desktop/mobile operation without an OLED.
+
 ---
 
 ## NavigationEngine
@@ -638,7 +655,7 @@ Shortest Path Logic
 Continuous Rotation
 ```
 
-The current positional-servo modes do not provide continuous-rotation pan feedback. Before implementing this mode, select the actuator, absolute orientation or homing method, and mechanical rotation limits.
+The positional-servo modes do not provide continuous-rotation pan feedback. The bench prototype selects SM-S4306R and rotating HMC5883L; production motion referencing, startup/recovery, and +/-170-degree travel protection remain unresolved. GPIO32 is an operator button, not an automatic home/index sensor. Up to two turns are permitted on the bench, not unlimited rotation.
 
 ---
 
@@ -754,7 +771,9 @@ System Health
 
 # 14. Configuration Storage
 
-Configuration shall extend the existing Backpack VRX configuration and persistence mechanisms unless an upstream-approved alternative is established. The current configuration is a packed, versioned structure; a version mismatch resets it to defaults rather than migrating fields. Any extension must define a compatibility and migration strategy before changing the stored layout.
+Configuration extends Backpack's versioned VRX structure and EEPROM provider. The local prototype uses v7: v6 appended pan neutral; v7 appended fixed-point compass offsets, scales, mounting offset, and validity. Explicit v5/v6 migrations preserve existing fields and initialize new ones; unsupported versions still reset to defaults. These are local changes, not an upstream release.
+
+DEC-05 compatibility policy remains: preserve existing values including `project=0xff`, initializing only new fields. Native fixtures test migration helpers, not byte-accurate EEPROM layouts or every legacy field. Serialized fixtures and current-version reload tests remain required before upstream contribution. The user verified HMC 104/32/1 and "Compass fit saved" after reboot; individual stored coefficients were not compared.
 
 ---
 
@@ -842,7 +861,7 @@ or abnormal tracking behavior.
 
 # 16. Performance Objectives
 
-These are AAT-Pro targets, not measurements of the current implementation. The current AAT servo loop enforces a 10 millisecond minimum update interval; achieved rate and jitter require measurement on each target.
+These are AAT-Pro targets, not measurements of the current implementation. `AatModule::Loop()` currently runs once per Arduino loop iteration without an active fixed schedule; servo writes are separately gated to at most one update per 10 milliseconds.
 
 Tracking Loop:
 
@@ -868,6 +887,16 @@ WebUI:
 Must never degrade
 tracking performance.
 ```
+
+### Proposed DEC-08 Acceptance (Pending Hardware Validation)
+
+- Measure `AatModule::Loop()` start-to-start period and execution duration, plus actual servo-write intervals. Report minimum, p95, and maximum for each 60-second active-tracking capture.
+- Hard limit: no tracking-loop gap over 100 milliseconds, preserving the 10 Hz minimum. Target: p95 loop period at or below 50 milliseconds, corresponding to 20 Hz.
+- Servo target: p95 write interval at or below 20 milliseconds, corresponding to 50 Hz; no interval over 100 milliseconds.
+- Report loop-period jitter as maximum minus minimum interval. Because the current loop is unpaced, treat this as descriptive; enforce the hard maximum-period limit rather than a separate jitter-range threshold.
+- Compare matched active GPS/home captures with the WebUI idle and under 10 read-only `/config` requests per second. Both must meet the hard limits, and loaded p95 loop period and execution duration must increase by no more than 10% over idle.
+
+These values are a proposal derived from the existing rate objectives. The current diagnostic reports min/max only; add percentile aggregation before using these p95 criteria. Ratify the limits only after matched captures on ESP8266 and ESP32 and investigation of the reported servo interval below the nominal 10 millisecond gate.
 
 ---
 
