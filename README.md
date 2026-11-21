@@ -1,22 +1,21 @@
-# ELRS-AAT-Pro
+# ExpressLRS Backpack AAT Continuous Pan
 
-Planning repository for an advanced antenna tracker built as an ExpressLRS Backpack extension.
+Planning repository for an optional continuous-rotation pan mode in the existing ExpressLRS Backpack antenna tracker, not a separate Pro product.
 
 ## Goals
 
-- GPS Home
-- Compass Support
-- Continuous 360° Tracking
-- Prediction Engine
-- Auto Latency Compensation
-- MAVLink Support
-- Extended WebUI
+- Preserve Backpack's CRSF aircraft-GPS tracking, positional modes, configuration and WebUI.
+- Add opt-in continuous pan with compass feedback and safety checks on supported existing hardware.
+- Keep bounded +/-170-degree travel as the default; plan an unrestricted option only for hardware that can safely rotate indefinitely.
+- Allow safe mode changes without a reboot where possible, subject to the existing Backpack Wi-Fi workflow.
+
+ESP32-S3, MAVLink, tracker-local GPS and new prediction systems are outside the active scope.
 
 ## Status
 
-Planning and bench implementation in progress. Firmware development is in the separate sibling `Backpack` repository; this repository contains specifications, audit, and work plan.
+Planning and bench implementation are in progress. Firmware development is in a separate `Backpack` repository; this repository contains specifications, audit and work plan, not firmware source.
 
-The ESP32 continuous-pan prototype has passed powered directional tracking and a simulated GPS orbit. A settled stop at the negative travel clamp and other field evidence remain open; see the backlog for current status.
+The ESP32 continuous-pan prototype passed powered directional tracking and a simulated GPS orbit using bounded travel. Its mode selection currently requires a reboot. Unrestricted travel and reboot-free mode switching are planned, not implemented; a settled stop at the negative travel clamp and other field evidence remain open.
 
 ## Resume
 

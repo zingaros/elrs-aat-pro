@@ -1,1196 +1,126 @@
-# Requirements Specification
-## AAT-Pro
-### Advanced ExpressLRS Backpack Antenna Tracker
+# Backpack AAT Continuous-Pan Requirements
 
-Version: 0.2 Draft
+Status: Draft target-state requirements. The local prototype implements some, but not all, of these requirements; see [architecture](architecture.md) for current behavior and [backlog](backlog.md) for remaining work and verification. Historical requirement references in [test history](backlog-history.md) refer to earlier versions of this specification.
 
-Status: Requirements Definition
+The goal is an opt-in continuous-rotation pan option within the existing ExpressLRS Backpack AAT, not a separate Pro product. ESP32-S3, MAVLink, tracker-local GPS, new prediction systems, PID and other proposed Pro features are outside the active scope. Preserve Backpack's existing optional projection and configuration.
 
-Related Documents:
+## Backpack integration and compatibility
 
-- architecture.md
-- backpack_audit.md
-- backlog.md
+### REQ-CONST-001: Native integration
 
----
+Continuous pan shall use the existing Backpack AAT application and target conventions, rather than a standalone firmware ecosystem. Reuse Backpack telemetry forwarding, build and update mechanisms, configuration storage and WebUI. Any target additions shall follow existing Backpack conventions.
 
-# 1. Purpose
+### REQ-PROD-002: Preserve existing behavior
 
-This document defines the functional and non-functional requirements for AAT-Pro.
+Existing positional modes, CRSF telemetry, aircraft-GPS home acquisition, navigation, elevation, WebUI and supported targets shall retain their behavior when continuous pan is not selected. Missing optional compass hardware shall not prevent normal positional operation.
 
-These are target-state requirements. The verified current Backpack AAT behavior is documented in `backpack_audit.md`; this specification does not imply that proposed features are already implemented.
+### REQ-PROD-004: Opt-in
 
-AAT-Pro is an advanced antenna tracker implemented as an extension of the ExpressLRS Backpack ecosystem.
+Continuous pan shall be disabled by default for new configurations and shall not be enabled by upgrading an existing configuration. Existing saved values, including the nonzero legacy `project` value, shall be preserved.
 
-AAT-Pro shall not become a parallel ecosystem.
+### REQ-TARGET-005: Supported hardware
 
-The project shall preserve compatibility with existing AAT deployments while enabling more advanced tracking capabilities on ESP32-based hardware.
+Offer continuous pan only on builds with the required pins, compass support and hardware. Preserve existing ESP8266 and other Backpack targets; do not require a new hardware family. The local ESP32 DevKit and HMC5883L-compatible compass are the current prototype profile, not a claim that every ESP32 board or compass is supported.
 
----
+## Telemetry and navigation
 
-# 2. Project Constraints
+### REQ-GPS-001: Existing aircraft GPS
 
-## REQ-CONST-001
+Use the existing Backpack CRSF aircraft-GPS path and its satellite-count-based home acquisition, navigation and optional azimuth projection. Do not introduce tracker-local GPS, a separate home workflow, new GPS source selection or new GPS jump-rejection behavior.
 
-AAT-Pro shall be implemented as an ExpressLRS Backpack target.
+### REQ-NAV-001: Existing navigation and elevation
 
-Priority: MUST
+Continue using Backpack's distance, bearing and relative-altitude elevation calculations and existing positional elevation configuration. Continuous-pan integration shall not change legacy positional elevation behavior.
 
----
+## Pan modes and transitions
 
-## REQ-CONST-002
+### REQ-PAN-001: Positional and continuous modes
 
-AAT-Pro shall reuse existing Backpack infrastructure whenever possible.
+Retain the existing positional modes and add continuous pan as an explicit option. Use the existing mode field where practical. The mode distinction shall prevent positional commands from being sent to a continuous-rotation actuator.
 
-Priority: MUST
+### REQ-PAN-002: Valid orientation and setup
 
-Examples:
+Continuous tracking shall not start with unknown orientation or invalid setup. A valid calibrated heading, required north alignment, mechanical-home confirmation, pulse calibration, fresh GPS and compass feedback, and applicable safety gates shall be established before tracking. Startup, reference loss and recovery shall be defined and tested.
 
-- WebUI framework
-- Target registration
-- Flashing workflow
-- Configuration storage
-- Telemetry forwarding
-- Build system
+### REQ-PAN-007: Safe mode transitions
 
----
+Permit switching between positional and continuous pan without reboot when safe. On either transition, inhibit pan output and clear stale controller state. Require explicit confirmation that the correct actuator is installed before enabling output; entering continuous mode also requires the gates in REQ-PAN-002. Neither controller may arm the wrong actuator. Preserve ordinary legacy operation when no mode transition is requested.
 
-## REQ-CONST-003
+The current prototype is boot-latched and requires reboot. The Backpack Wi-Fi configuration lifecycle shall be investigated separately; do not claim a completely reboot-free configuration workflow until verified. A software neutral request or detached output does not establish a physical stop.
 
-AAT-Pro shall not introduce a standalone firmware ecosystem.
+## Travel policies
 
-Priority: MUST
+### REQ-PAN-008: Bounded default
 
----
+Default to the existing home-relative +/-170-degree target clamp and bounded route. The controller shall not choose a rear-wrap shortcut across the boundary; a target crossing the rear may require a return through home. Out-of-range measured pan or invalid reference shall inhibit tracking and require safe recovery.
 
-## REQ-CONST-004
+### REQ-PAN-003: Unrestricted shortest path
 
-AAT-Pro shall remain suitable for upstream integration.
+Provide an explicitly selected unrestricted policy only after the owner confirms the hardware can safely rotate indefinitely, for example with a slip ring or no winding cables. Use the shortest angular path without applying the bounded policy's travel-limit assumptions.
 
-Priority: MUST
+Acceptance criteria:
 
----
+- From a current heading of 359 degrees to a target of 1 degree, command a +2-degree move; from 1 to 359 degrees, command a -2-degree move.
+- An exact 180-degree tie uses a documented, deterministic direction.
+- Bounded operation remains the default; unrestricted operation requires explicit selection and physical-setup confirmation.
 
-## REQ-CONST-005
+### REQ-PAN-009: Safe policy changes
 
-All advanced functionality shall remain modular.
+Inhibit pan output and safely revalidate required setup when changing travel policy. Both policies retain valid heading, reference, GPS freshness, neutral and output-envelope safeguards. A compass cannot count cable turns or detect a whole revolution missed between samples; unrestricted operation shall not be presented as safe for limited-travel cabling.
 
-Priority: MUST
+## Compass, calibration and output safety
 
----
+### REQ-COMP-001: Compass feedback
 
-# 3. Product Variants
+Continuous pan shall use a supported, calibrated compass and monitor heading validity and freshness. A missing, stale or invalid compass shall inhibit continuous tracking and select neutral; it shall not silently fall back to unverified heading. Positional tracking without the optional compass remains available.
 
-## REQ-PROD-001
+### REQ-COMP-003: Commissioning and reference
 
-The firmware shall support the following target families:
+Use the existing Backpack WebUI and operator controls for compass fit, mounting-direction verification, north alignment, mechanical-home confirmation and minimum-motion pulse calibration. Preserve the existing protections unless a simpler approach is verified to be equivalent:
 
-```text
-AAT_CLASSIC
+- Validate compass-fit coverage and retain the prior valid fit on a failed sweep. Preserve owner axis scales when an existing site-offset refresh succeeds.
+- Keep compass calibration, north alignment, mechanical home and servo neutral distinct. Confirm mechanical home again after boot; do not silently establish it by timeout.
+- Permit powered sweeps, pulse calibration and manual direction checks only through explicit operator action, with stop, sensor-loss, timeout and applicable safety exits. Failed or cancelled calibration shall not save partial results as valid.
+- Changing settings that invalidate calibration or alignment shall block tracking until the affected setup is restored.
 
-AAT_PRO_ESP32
+The precise current prototype sequence and its limitations are documented in [architecture](architecture.md).
 
-AAT_PRO_ESP32_S3
-```
+### REQ-SAFE-001: Freshness and failure
 
-Priority: MUST
+Continuous tracking shall select neutral when required GPS or compass data is stale, reference or calibration is invalid, or another tracking safety gate fails. Preserve at least the existing prototype's compass freshness and configuration checks, GPS three-interval freshness rule with a hard age cap below three seconds, and reference-loss recovery unless an equivalent safe change is verified. Recovery shall not bypass a required new mechanical-home confirmation.
 
-Status: Proposed target families. The current Backpack AAT environments are `AAT_ESP_Backpack_via_UART`, `AAT_ESP_Backpack_via_WIFI`, and `AAT_ESP32_Backpack_via_UART`; no distinct ESP32-S3 AAT environment was found in the reviewed target file.
+The freshness timeout is not an immediate emergency stop. A physical power cutoff remains necessary for unexpected motion; software readback is not proof of an electrical pulse or physical stop.
 
----
+### REQ-FLT-003: Deadband and pulse envelope
 
-## REQ-PROD-002
+Retain configurable deadband, calibrated directional start pulses and validated neutral-relative output limits. Changing neutral or directional limits shall invalidate affected pulse calibration. The pulse envelope shall remain within the supported 1000-2000 us range. Do not claim a measured angular-speed limit from pulse offsets alone.
 
-AAT Classic functionality shall remain unchanged.
+### REQ-SAFE-007: Preserve safety under filtering
 
-Priority: MUST
+Filtering shall not mask genuine travel violations or allow movement contrary to raw safety gates. Preserve the current raw-heading guard unless a replacement is verified against real limit crossings and faulty feedback. Compass spikes can still invalidate reference in the current prototype; do not claim the tracking median eliminates that risk.
 
----
+## Configuration and user interface
 
-## REQ-PROD-003
+### REQ-CFG-001: Backpack storage
 
-AAT-Pro functionality shall be additive.
+Use Backpack-native configuration storage and validation, with no independent storage system. Preserve existing settings during supported migrations and initialize only new fields. Cover legacy and local prototype configurations, serialized storage and current-version reloads; do not silently reset unrelated settings.
 
-Priority: MUST
+### REQ-WEB-001: Existing WebUI
 
----
+Integrate mode and travel-policy selection, explicit confirmations, calibration controls, readiness and block reasons into the existing Backpack WebUI and endpoints. Show applicable controls without hiding active commissioning stop/neutral actions. Do not require separate pages or a new WebUI framework.
 
-## REQ-PROD-004
+### REQ-UI-001: Optional display
 
-New AAT-Pro-only features shall be disabled by default for new configurations. This requirement shall not disable legacy AAT behavior or overwrite existing configuration values.
+Do not make an OLED a prerequisite for tracking or configuration. Where the existing display is supported, preserve its normal Backpack behavior and make setup/reference prompts available as appropriate.
 
-Priority: MUST
+## Verification and release
 
----
+### REQ-VERIFY-001: Software verification
 
-## REQ-PROD-005
+Add focused tests for legacy settings and migrations, positional modes, inhibited mode transitions and re-arming, stale/fault recovery, bounded clamp and rear wrap, unrestricted 359/1 wrap and deterministic 180-degree ties, and safe policy changes. Build the existing AAT targets and relevant continuous-pan targets; check WebUI/API and Wi-Fi lifecycle behavior. Existing prototype test results apply only to the tested firmware.
 
-Users upgrading existing AAT installations shall experience no behavior changes unless they explicitly enable a new AAT-Pro-only feature. Existing settings and behavior, including the current nonzero legacy `project` setting, shall be preserved.
+### REQ-VERIFY-002: Hardware verification
 
-Priority: MUST
+Validate physical direction, neutral/fault handling and both travel policies only with explicit owner approval, suitable hardware and an accessible physical cutoff. A bounded setup with limited cable travel shall not be used to validate unrestricted rotation. Record software and physical observations separately; simulated tracking and pulse readback do not establish physical safety.
 
----
-
-# 4. Capability Requirements
-
-## REQ-CAP-001
-
-All advanced features shall be capability-driven.
-
-Priority: MUST
-
----
-
-## REQ-CAP-002
-
-Tracking logic shall not directly depend on board names.
-
-Priority: MUST
-
-Preferred:
-
-```cpp
-if(capability.compass)
-```
-
-Forbidden:
-
-```cpp
-if(board == ESP32S3)
-```
-
----
-
-## REQ-CAP-003
-
-Capabilities shall be determined using:
-
-```text
-Build Target Support
-+
-Runtime Detection When Required By Hardware
-+
-User Configuration
-```
-
-Software-only features do not require runtime hardware detection; their availability is determined by build support and user configuration.
-
-Priority: MUST
-
----
-
-## REQ-CAP-004
-
-Missing optional capabilities shall not prevent operation.
-
-Priority: MUST
-
----
-
-## REQ-CAP-005
-
-All optional capabilities shall support graceful fallback behavior.
-
-Priority: MUST
-
----
-
-# 5. Target System Requirements
-
-In the reviewed Backpack implementation, AAT builds are PlatformIO environments in `targets/aat.ini`. AAT-Pro target additions shall follow the current Backpack build and upload conventions; this does not assert that proposed product-family names are already registered.
-
-## REQ-TARGET-001
-
-AAT-Pro targets shall be registered through the Backpack target system.
-
-Priority: MUST
-
----
-
-## REQ-TARGET-002
-
-Target definitions shall reuse Backpack target registration mechanisms.
-
-Priority: MUST
-
----
-
-## REQ-TARGET-003
-
-Target definitions shall specify:
-
-```text
-Platform
-Capabilities
-Firmware
-Upload Methods
-Default Pin Assignments
-```
-
-Priority: MUST
-
----
-
-## REQ-TARGET-004
-
-Target additions shall not require modifications to existing AAT Classic targets.
-
-Priority: MUST
-
----
-
-# 6. Telemetry Requirements
-
-## REQ-TLM-001
-
-The system shall support CRSF telemetry.
-
-Priority: MUST
-
----
-
-## REQ-TLM-002
-
-The system shall support Backpack telemetry forwarding.
-
-Priority: MUST
-
----
-
-## REQ-TLM-003
-
-The system shall support MAVLink telemetry.
-
-Priority: SHOULD
-
----
-
-## REQ-TLM-004
-
-The system shall automatically detect telemetry loss.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-```text
-No valid aircraft-position update from the selected telemetry source for 3 seconds
--> one Telemetry Loss Event
-```
-
-The event shall clear only after a valid aircraft-position update is accepted. Loss handling actions are specified separately by REQ-SAFE-002.
-
----
-
-## REQ-TLM-005
-
-The system shall report telemetry update rate.
-
-Priority: SHOULD
-
----
-
-## REQ-TLM-006
-
-The system shall report packet loss statistics.
-
-Priority: SHOULD
-
----
-
-# 7. GPS Requirements
-
-## REQ-GPS-001
-
-The system shall preserve the existing Backpack CRSF aircraft-GPS path.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- Aircraft position and home data continue to use the existing Backpack configuration and telemetry behavior.
-- AAT-Pro modes do not introduce a separate aircraft-position workflow.
-
----
-
-## REQ-GPS-002
-
-The system shall not require a tracker-local GPS receiver to establish home.
-
-Priority: MUST
-
-Scope:
-
-- Tracker-local GPS hardware, tracker-GPS home acquisition, and a 30-second tracker-GPS qualification workflow are out of scope.
-- No AAT-Pro GPS source-selection UI or workflow shall be added.
-
----
-
-## REQ-GPS-003
-
-Home selection and persistence shall remain consistent with the existing Backpack CRSF aircraft-GPS implementation.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- Existing home configuration remains available without tracker-local GPS hardware.
-- Compass-pan additions do not overwrite or reinterpret stored home values.
-
----
-
-## REQ-GPS-004
-
-New GPS jump rejection or GPS recovery behavior shall not be introduced without a demonstrated baseline issue and an approved requirement.
-
-Status: Out of current scope. DEC-09 in `backlog.md` records the decision.
-
----
-
-# 8. Compass Requirements
-
-## REQ-COMP-001
-
-The system shall support an optional compass.
-
-Priority: MUST
-
----
-
-## REQ-COMP-002
-
-The following sensors should be supported:
-
-```text
-QMC5883L
-LIS3MDL
-BMM150
-```
-
-Priority: SHOULD
-
----
-
-## REQ-COMP-003
-
-Compass calibration shall be supported.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- The WebUI shall provide an owner calibration that captures one operator-marked full pan rotation, validates sample coverage, and stores the compass offset and axis-scale fit.
-- The owner sweep shall require a fresh compass sample and a manual reference-button press to start; the operator releases the button to begin rotation and presses it again at the reference mark to complete the sweep. Explicit stop, sensor loss, and a bounded timeout shall also stop the sweep.
-- A later site sweep may refresh the local compass offset using a valid owner fit; it shall preserve the owner-calibrated axis scales and leave the prior calibration unchanged if the sweep fails.
-- Compass calibration shall remain separate from the mechanical home/index reference and pan-servo neutral setting.
-
----
-
-## REQ-COMP-004
-
-Compass health shall be monitored.
-
-Priority: MUST
-
----
-
-## REQ-COMP-005
-
-Compass failure shall not stop tracking.
-
-Priority: MUST
-
-Fallback:
-
-```text
-Manual Heading Mode
-```
-
----
-
-# 9. Navigation Requirements
-
-## REQ-NAV-001
-
-The system shall calculate:
-
-```text
-Distance
-Bearing
-Elevation
-```
-
-Priority: MUST
-
----
-
-## REQ-NAV-002
-
-Geodetic coordinate calculations shall be used.
-
-Priority: MUST
-
----
-
-## REQ-NAV-003
-
-Elevation shall support relative altitude calculations.
-
-Priority: MUST
-
----
-
-# 10. Pan/Tilt Requirements
-
-## REQ-PAN-001
-
-Standard servo mode shall be supported.
-
-Priority: MUST
-
----
-
-## REQ-PAN-002
-
-Continuous 360-degree pan mode shall be supported only when the system has a known absolute pan orientation, obtained through position feedback or a defined homing procedure.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- The mode cannot enter active tracking with unknown pan orientation.
-- Startup, loss of orientation, and recovery behavior are defined for the selected actuator before implementation.
-
----
-
-## REQ-PAN-003
-
-Continuous pan tracking shall use shortest-path calculations.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- A target change from 359 degrees to 1 degree commands a +2-degree move.
-- A target change from 1 degree to 359 degrees commands a -2-degree move.
-- Exact 180-degree ties use a documented, deterministic direction.
-
----
-
-## REQ-PAN-004
-
-Tilt servos up to 180 degrees shall be supported.
-
-Priority: SHOULD
-
----
-
-## REQ-PAN-005
-
-Maximum rotation speed shall be configurable.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- The configured limit is expressed in angular units per second and is not exceeded by the commanded trajectory.
-- Supported range and units shall be set from the selected actuator in `backlog.md` before implementation.
-
----
-
-## REQ-PAN-006
-
-Maximum angular acceleration shall be configurable.
-
-Priority: SHOULD
-
----
-
-# 11. Filtering Requirements
-
-## REQ-FLT-001
-
-GPS filtering shall be supported.
-
-Priority: MUST
-
----
-
-## REQ-FLT-002
-
-EMA filtering shall be supported.
-
-Priority: MUST
-
----
-
-## REQ-FLT-003
-
-Servo deadband shall be supported.
-
-Priority: MUST
-
----
-
-## REQ-FLT-004
-
-Deadband shall be configurable.
-
-Priority: MUST
-
----
-
-## REQ-FLT-005
-
-Distance-adaptive deadband should be supported.
-
-Priority: SHOULD
-
----
-
-## REQ-FLT-006
-
-Tilt easing should be supported.
-
-Priority: SHOULD
-
----
-
-# 12. PID Requirements
-
-## REQ-PID-001
-
-PID control shall be supported.
-
-Priority: SHOULD
-
----
-
-## REQ-PID-002
-
-Independent PID controllers shall be available for:
-
-```text
-Pan
-Tilt
-```
-
-Priority: SHOULD
-
----
-
-## REQ-PID-003
-
-PID shall remain disabled by default.
-
-Priority: MUST
-
----
-
-# 13. Prediction Requirements
-
-## REQ-PRED-001
-
-Prediction shall be optional.
-
-Priority: MUST
-
----
-
-## REQ-PRED-002
-
-Linear prediction shall be supported.
-
-Priority: MUST
-
----
-
-## REQ-PRED-003
-
-Adaptive prediction shall be supported.
-
-Priority: SHOULD
-
----
-
-## REQ-PRED-004
-
-The system shall support short-term tracking continuation during telemetry outages.
-
-Priority: SHOULD
-
-Acceptance Criteria:
-
-- Continuation is bounded by the outage policy in DEC-04 and cannot override the configured telemetry-loss action.
-
----
-
-## REQ-PRED-005
-
-Prediction failure shall automatically revert to standard tracking.
-
-Priority: MUST
-
----
-
-# 14. Latency Compensation Requirements
-
-## REQ-LAT-001
-
-Manual latency compensation shall be supported.
-
-Priority: MUST
-
----
-
-## REQ-LAT-002
-
-Automatic latency compensation shall be supported.
-
-Priority: SHOULD
-
----
-
-## REQ-LAT-003
-
-Latency estimation range:
-
-```text
-200 ms
-to
-1000 ms
-```
-
-Priority: MUST
-
----
-
-## REQ-LAT-004
-
-Prediction quality shall be monitored continuously.
-
-Priority: SHOULD
-
----
-
-## REQ-LAT-005
-
-The system shall automatically reduce prediction aggressiveness if prediction quality degrades.
-
-Priority: SHOULD
-
----
-
-# 15. Safety Requirements
-
-## REQ-SAFE-001
-
-Telemetry loss shall be detected.
-
-Priority: MUST
-
----
-
-## REQ-SAFE-002
-
-Configurable telemetry-loss behavior shall be supported.
-
-Priority: MUST
-
-Available Modes:
-
-```text
-Hold
-Park
-Return Home Direction
-```
-
----
-
-## REQ-SAFE-003
-
-Zenith protection shall be implemented.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- The boundary condition and fallback behavior are specified and tested as DEC-10 in `backlog.md` before implementation.
-
----
-
-## REQ-SAFE-004
-
-Servo health monitoring should be supported.
-
-Priority: SHOULD
-
-Acceptance Criteria:
-
-- The quality metric, evaluation window, and degradation threshold are specified as DEC-11 in `backlog.md` before adaptive prediction is enabled.
-
----
-
-## REQ-SAFE-005
-
-Servo stall detection should be supported.
-
-Priority: SHOULD
-
----
-
-## REQ-SAFE-006
-
-Startup self-tests should be supported.
-
-Priority: SHOULD
-
----
-
-# 16. Configuration Storage Requirements
-
-## REQ-CFG-001
-
-Configuration shall use Backpack-native persistence mechanisms.
-
-Priority: MUST
-
----
-
-## REQ-CFG-002
-
-No independent storage system shall be introduced.
-
-Priority: MUST
-
----
-
-## REQ-CFG-003
-
-Configuration migration shall not require manual intervention.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- A valid existing Backpack VRX config version 5 retains all existing settings after upgrade.
-- A valid local version 6 config retains its pan neutral and legacy settings when upgrading to version 7.
-- New config fields are initialized without resetting unrelated stored settings.
-- Migration behavior is covered by tests for both a legacy config and a new config.
-
-Implementation note: the local v7 prototype has helper-level migration tests and user-confirmed saved-fit status after reboot. Byte-accurate EEPROM fixtures, complete legacy-field preservation tests, and coefficient-by-coefficient reload checks remain outstanding acceptance work.
-
----
-
-# 17. User Interface Requirements
-
-## REQ-UI-001
-
-All functionality shall remain usable without an OLED display.
-
-Priority: MUST
-
----
-
-## REQ-UI-002
-
-Operation without display shall be supported.
-
-Priority: MUST
-
----
-
-## REQ-UI-003
-
-Operation with OLED display shall be supported.
-
-Priority: MUST
-
----
-
-## REQ-UI-004
-
-Single-button operation shall be supported.
-
-Priority: MUST
-
----
-
-## REQ-UI-005
-
-Additional buttons shall remain optional.
-
-Priority: SHOULD
-
----
-
-# 18. WebUI Requirements
-
-## REQ-WEB-001
-
-AAT-Pro shall extend the existing Backpack WebUI infrastructure.
-
-Priority: MUST
-
----
-
-## REQ-WEB-002
-
-No standalone WebUI framework shall be created.
-
-Priority: MUST
-
----
-
-## REQ-WEB-003
-
-AAT-Pro pages shall integrate into existing Backpack navigation.
-
-Priority: SHOULD
-
----
-
-## REQ-WEB-004
-
-A Status page shall be provided.
-
-Priority: MUST
-
----
-
-## REQ-WEB-005
-
-A Configuration page shall be provided.
-
-Priority: MUST
-
----
-
-## REQ-WEB-006
-
-A Servo page shall be provided.
-
-Priority: MUST
-
----
-
-## REQ-WEB-007
-
-A Diagnostics page shall be provided.
-
-Priority: MUST
-
----
-
-## REQ-WEB-008
-
-A GPS page should be provided.
-
-Priority: SHOULD
-
----
-
-## REQ-WEB-009
-
-A Compass page should be provided.
-
-Priority: SHOULD
-
----
-
-## REQ-WEB-010
-
-A Prediction page should be provided.
-
-Priority: SHOULD
-
----
-
-# 19. Diagnostics Requirements
-
-## REQ-DIAG-001
-
-The system shall expose telemetry statistics.
-
-Priority: SHOULD
-
----
-
-## REQ-DIAG-002
-
-The system shall expose GPS health information.
-
-Priority: SHOULD
-
----
-
-## REQ-DIAG-003
-
-The system shall expose compass health information.
-
-Priority: SHOULD
-
----
-
-## REQ-DIAG-004
-
-The system shall expose prediction metrics.
-
-Priority: SHOULD
-
----
-
-## REQ-DIAG-005
-
-Debug logging should be supported.
-
-Priority: SHOULD
-
----
-
-# 20. Performance Requirements
-
-## REQ-PERF-001
-
-Tracking calculations shall never block telemetry processing.
-
-Priority: MUST
-
----
-
-## REQ-PERF-002
-
-The tracking loop shall execute deterministically.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- Tracking execution does not depend on WebUI request timing.
-- Maximum loop period and jitter are quantified on each supported target before implementation is considered complete; the thresholds are recorded in `backlog.md`.
-
----
-
-## REQ-PERF-003
-
-WebUI activity shall not degrade tracking performance.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- Tracking loop timing is measured with and without concurrent WebUI requests on each supported target.
-- Timing remains within the REQ-PERF-002 limits.
-
----
-
-## REQ-PERF-004
-
-The architecture shall remain compatible with ESP32-class hardware.
-
-Priority: MUST
-
----
-
-# 21. Compatibility Requirements
-
-## REQ-COMPAT-001
-
-AAT Classic users shall experience no functional change.
-
-Priority: MUST
-
----
-
-## REQ-COMPAT-002
-
-Existing Backpack targets shall remain supported.
-
-Priority: MUST
-
----
-
-## REQ-COMPAT-003
-
-Optional hardware failures shall not prevent operation.
-
-Priority: MUST
-
----
-
-## REQ-COMPAT-004
-
-Current Backpack targets shall compile without modification.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- Existing target definitions remain unchanged by an AAT-Pro feature addition.
-- The current AAT environments listed in `backpack_audit.md` and the agreed existing-target regression matrix compile successfully.
-
----
-
-## REQ-COMPAT-005
-
-Disabling AAT-Pro features shall restore baseline behavior.
-
-Priority: MUST
-
----
-
-## REQ-COMPAT-006
-
-The firmware shall compile cleanly when optional hardware is absent.
-
-Priority: MUST
-
----
-
-# 22. Upstream Contribution Requirements
-
-## REQ-UPSTREAM-001
-
-Features shall be divisible into independent pull requests.
-
-Priority: MUST
-
----
-
-## REQ-UPSTREAM-002
-
-Each pull request shall provide standalone value.
-
-Priority: MUST
-
----
-
-## REQ-UPSTREAM-003
-
-Each feature shall degrade gracefully when disabled.
-
-Priority: MUST
-
----
-
-## REQ-UPSTREAM-004
-
-No pull request shall require all AAT-Pro functionality to be merged simultaneously.
-
-Priority: MUST
-
----
-
-# 23. Release Roadmap
-
-The implementation sequence, dependencies, open design decisions, and exit criteria are maintained in `backlog.md`. Version labels below are provisional milestones, not release-date commitments.
-
-## v0.1
-
-```text
-Refactoring Foundation
-```
-
----
-
-## v0.2
-
-```text
-Target Definition Layer
-```
-
----
-
-## v0.3
-
-```text
-Compass Support
-```
-
----
-
-## v0.4
-
-```text
-Continuous-Rotation Pan
-```
-
----
-
-## v0.5
-
-```text
-WebUI Extensions
-```
-
----
-
-## v0.6
-
-```text
-Field Validation and Safety Recovery
-```
-
----
-
-## v0.7
-
-```text
-Filtering
-```
-
----
-
-## v0.8
-
-```text
-PID Support
-```
-
----
-
-## v0.9
-
-```text
-Prediction Engine
-```
-
----
-
-## v1.0
-
-```text
-Diagnostics
-```
-
----
-
-## v1.1
-
-```text
-Automatic Latency Compensation
-```
-
----
-
-## v1.2
-
-```text
-MAVLink Support
-```
-
----
-
-# 24. Success Criteria
-
-AAT-Pro shall be considered successful when:
-
-- AAT Classic remains unaffected.
-- New Backpack targets integrate cleanly.
-- No parallel ecosystem is created.
-- Configuration is primarily WebUI-based.
-- Advanced hardware remains optional.
-- Features are mergeable as independent pull requests.
-- Features are mergeable as independent pull requests.
-- The architecture scales from ESP8266 AAT Classic to ESP32-S3 AAT-Pro Full.
- The architecture scales from ESP8266 AAT Classic to ESP32-S3 AAT-Pro Full.
+The implementation sequence and outstanding evidence are maintained in [backlog](backlog.md). Firmware implementation and verification require access to the separate Backpack source.
