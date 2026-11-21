@@ -302,75 +302,48 @@ Priority: SHOULD
 
 ## REQ-GPS-001
 
-The system shall support aircraft GPS data.
+The system shall preserve the existing Backpack CRSF aircraft-GPS path.
 
 Priority: MUST
+
+Acceptance Criteria:
+
+- Aircraft position and home data continue to use the existing Backpack configuration and telemetry behavior.
+- AAT-Pro modes do not introduce a separate aircraft-position workflow.
 
 ---
 
 ## REQ-GPS-002
 
-The system shall support an optional tracker GPS.
+The system shall not require a tracker-local GPS receiver to establish home.
 
 Priority: MUST
+
+Scope:
+
+- Tracker-local GPS hardware, tracker-GPS home acquisition, and a 30-second tracker-GPS qualification workflow are out of scope.
+- No AAT-Pro GPS source-selection UI or workflow shall be added.
 
 ---
 
 ## REQ-GPS-003
 
-The system shall support automatic home acquisition.
+Home selection and persistence shall remain consistent with the existing Backpack CRSF aircraft-GPS implementation.
 
 Priority: MUST
+
+Acceptance Criteria:
+
+- Existing home configuration remains available without tracker-local GPS hardware.
+- Compass-pan additions do not overwrite or reinterpret stored home values.
 
 ---
 
 ## REQ-GPS-004
 
-Tracker-local GPS home acquisition shall require:
+New GPS jump rejection or GPS recovery behavior shall not be introduced without a demonstrated baseline issue and an approved requirement.
 
-```text
-3D Fix
-Satellite Count >= 10
-HDOP <= 1.5
-Stable Position >= 30 seconds
-```
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- All listed fix-quality conditions remain valid for at least 30 seconds before a tracker-GPS home is accepted.
-- The position-stability radius is a design input and must be specified before implementation (see `backlog.md`).
-- These tracker-GPS quality gates do not silently change the existing CRSF telemetry-home behavior.
-
----
-
-## REQ-GPS-005
-
-The system shall reject implausible GPS jumps.
-
-Priority: MUST
-
-Acceptance Criteria:
-
-- A rejected jump does not update the accepted position or home.
-- The rejection threshold and recovery behavior are specified and tested as DEC-09 in `backlog.md` before implementation.
-
----
-
-## REQ-GPS-006
-
-Tracker GPS failure shall not prevent operation.
-
-Priority: MUST
-
-Fallback:
-
-```text
-Telemetry Home
-```
-
-The source-selection and precedence rules for manual, tracker-GPS, and telemetry home remain a design decision tracked in `backlog.md`.
+Status: Out of current scope. DEC-09 in `backlog.md` records the decision.
 
 ---
 
@@ -1131,7 +1104,7 @@ Target Definition Layer
 ## v0.3
 
 ```text
-Local GPS
+Compass Support
 ```
 
 ---
@@ -1139,7 +1112,7 @@ Local GPS
 ## v0.4
 
 ```text
-Compass Support
+Continuous-Rotation Pan
 ```
 
 ---
@@ -1147,7 +1120,7 @@ Compass Support
 ## v0.5
 
 ```text
-Continuous 360-degree Tracking
+WebUI Extensions
 ```
 
 ---
@@ -1155,7 +1128,7 @@ Continuous 360-degree Tracking
 ## v0.6
 
 ```text
-WebUI Extensions
+Field Validation and Safety Recovery
 ```
 
 ---
